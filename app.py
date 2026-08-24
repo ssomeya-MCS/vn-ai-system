@@ -5,7 +5,7 @@ import random
 
 # ==========================================================
 # 訪問看護AIアシスタント - 会話型ワークフローモック
-# API/DBなしで動くデモ版
+# 完全統合版（権限制御＋リッチUI復活）
 # ==========================================================
 
 st.set_page_config(
@@ -15,33 +15,29 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---------- デモマスタ ----------
+# ---------- デモマスタ (権限・事業所追加) ----------
 USERS = {
-    "na.mukai@sample.co.jp": {"name": "向井", "role": "システム管理者", "pass": "password"},
-    "tsutomu.jimbo@sample.co.jp": {"name": "神保", "role": "本部管理者", "pass": "password"},
-    "nobuko.nakatake@sample.co.jp": {"name": "中武", "role": "看護師", "pass": "password"},
+    "na.mukai@sample.co.jp": {"name": "向井", "role": "システム管理者", "branch": "本部", "pass": "password"},
+    "tsutomu.jimbo@sample.co.jp": {"name": "神保", "role": "本部管理者", "branch": "本部", "pass": "password"},
+    "nobuko.nakatake@sample.co.jp": {"name": "中武", "role": "看護師", "branch": "東京第一ステーション", "pass": "password"},
 }
+
+BRANCHES = ["東京第一ステーション", "横浜ステーション", "埼玉中央ステーション"]
 
 PATIENTS = {
     "山田 太郎 (78歳 / 心不全)": {
-        "age": 78,
-        "disease": "心不全",
-        "weight_change": "+2.4kg",
-        "vitals": "BP 138/84 / SpO2 97% / 体温36.6℃ / PR 72",
+        "age": 78, "disease": "心不全", "branch": "東京第一ステーション",
+        "weight_change": "+2.4kg", "vitals": "BP 138/84 / SpO2 97% / 体温36.6℃ / PR 72",
         "symptoms": ["両下腿浮腫", "軽度の息苦しさ", "食欲低下"],
     },
     "佐藤 花子 (85歳 / 認知症・独居)": {
-        "age": 85,
-        "disease": "認知症",
-        "weight_change": "-1.2kg",
-        "vitals": "BP 132/76 / SpO2 96% / 体温36.4℃ / PR 78",
+        "age": 85, "disease": "認知症", "branch": "東京第一ステーション",
+        "weight_change": "-1.2kg", "vitals": "BP 132/76 / SpO2 96% / 体温36.4℃ / PR 78",
         "symptoms": ["服薬忘れ", "夜間不眠", "食事摂取量低下"],
     },
     "鈴木 一郎 (72歳 / 糖尿病)": {
-        "age": 72,
-        "disease": "糖尿病",
-        "weight_change": "-0.8kg",
-        "vitals": "BP 146/88 / SpO2 98% / 体温36.5℃ / PR 80",
+        "age": 72, "disease": "糖尿病", "branch": "横浜ステーション",
+        "weight_change": "-0.8kg", "vitals": "BP 146/88 / SpO2 98% / 体温36.5℃ / PR 80",
         "symptoms": ["食欲低下", "口渇", "血糖値変動"],
     },
 }
@@ -49,60 +45,20 @@ PATIENTS = {
 # ---------- CSS ----------
 st.markdown("""
 <style>
-[data-testid="stSidebar"] {
-    background: #3F0E40;
-}
-[data-testid="stSidebar"] * {
-    color: #F2E8F2 !important;
-}
-[data-testid="stSidebar"] .stButton button {
-    background: transparent;
-    border: none;
-    text-align: left;
-}
-.ai-card {
-    border: 1px solid #ddd;
-    border-radius: 12px;
-    padding: 18px;
-    margin: 10px 0;
-    background: #fff;
-}
-.alert-card {
-    border-left: 5px solid #d9534f;
-    background: #fff7f7;
-    padding: 15px;
-    border-radius: 8px;
-}
-.info-card {
-    border-left: 5px solid #4f81bd;
-    background: #f7fbff;
-    padding: 15px;
-    border-radius: 8px;
-}
-.success-card {
-    border-left: 5px solid #3c9a5f;
-    background: #f7fff9;
-    padding: 15px;
-    border-radius: 8px;
-}
-.small-muted {
-    color: #777;
-    font-size: 0.85rem;
-}
+[data-testid="stSidebar"] { background: #3F0E40; }
+[data-testid="stSidebar"] * { color: #F2E8F2 !important; }
+[data-testid="stSidebar"] .stButton button { background: transparent; border: none; text-align: left; }
+.ai-card { border: 1px solid #ddd; border-radius: 12px; padding: 18px; margin: 10px 0; background: #fff; }
+.info-card { border-left: 5px solid #4f81bd; background: #f7fbff; padding: 15px; border-radius: 8px; }
+.manage-card { border-left: 5px solid #f0ad4e; background: #fcf8e3; padding: 15px; border-radius: 8px; margin-bottom: 20px;}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------- セッション ----------
 defaults = {
-    "auth_status": "logged_out",
-    "user_info": None,
-    "otp": None,
-    "selected_patient": "山田 太郎 (78歳 / 心不全)",
-    "messages": [],
-    "workflow": "idle",
-    "visit_data": {},
-    "record_generated": False,
-    "billing_generated": False,
+    "auth_status": "logged_out", "user_info": None, "otp": None,
+    "selected_patient": "山田 太郎 (78歳 / 心不全)", "messages": [],
+    "workflow": "idle", "visit_data": {}, "record_generated": False, "billing_generated": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -125,8 +81,9 @@ if st.session_state.auth_status == "logged_out":
             else:
                 st.error("IDまたはパスワードが正しくありません。")
         with st.expander("開発テスト用アカウント"):
-            st.write("看護師: `nobuko.nakatake@mcsg.co.jp` / `password`")
-            st.write("本部管理者: `tsutomu.jimbo@mcsg.co.jp` / `password`")
+            st.write("・システム管理者: `na.mukai@sample.co.jp` / `password`")
+            st.write("・本部管理者: `tsutomu.jimbo@sample.co.jp` / `password`")
+            st.write("・看護師: `nobuko.nakatake@sample.co.jp` / `password`")
     st.stop()
 
 if st.session_state.auth_status == "otp_required":
@@ -141,65 +98,69 @@ if st.session_state.auth_status == "otp_required":
                 st.rerun()
             else:
                 st.error("認証コードが一致しません。")
-        if st.button("ログイン画面に戻る", use_container_width=True):
-            st.session_state.auth_status = "logged_out"
-            st.rerun()
     st.stop()
 
 # ---------- ヘルパー ----------
-def add_ai(text):
-    st.session_state.messages.append(("assistant", text))
-
-def add_user(text):
-    st.session_state.messages.append(("user", text))
-
-def go_chat():
-    st.session_state.workflow = "idle"
-    st.rerun()
+def add_ai(text): st.session_state.messages.append(("assistant", text))
+def add_user(text): st.session_state.messages.append(("user", text))
+def go_chat(): st.session_state.workflow = "idle"; st.rerun()
 
 def show_patient_summary():
-    p = PATIENTS[st.session_state.selected_patient]
-    st.markdown(
-        f'<div class="info-card"><b>対象患者</b>：{st.session_state.selected_patient}'
-        f'<br><b>バイタル</b>：{p["vitals"]}'
-        f'<br><b>体重変化</b>：{p["weight_change"]}'
-        f'<br><b>主な症状</b>：{"、".join(p["symptoms"])}</div>',
-        unsafe_allow_html=True,
-    )
+    if not st.session_state.selected_patient: return
+    p = PATIENTS.get(st.session_state.selected_patient)
+    if p:
+        st.markdown(
+            f'<div class="info-card"><b>対象患者</b>：{st.session_state.selected_patient}'
+            f'<br><b>バイタル</b>：{p["vitals"]}'
+            f'<br><b>体重変化</b>：{p["weight_change"]}'
+            f'<br><b>主な症状</b>：{"、".join(p["symptoms"])}</div>',
+            unsafe_allow_html=True,
+        )
 
 # ---------- サイドバー ----------
 user = st.session_state.user_info
+
+# 看護師の場合は、自分の事業所の患者のみ選択肢に出す
+if user["role"] == "看護師":
+    available_patients = {k: v for k, v in PATIENTS.items() if v["branch"] == user["branch"]}
+else:
+    available_patients = PATIENTS
+
 with st.sidebar:
     st.markdown("### 🏢 訪問看護ステーション")
-    st.write(f"👤 **{user['name']}**")
-    st.caption(user["role"])
+    st.write(f"👤 **{user['name']}** ({user['role']})")
+    st.caption(f"📍 所属: {user['branch']}")
 
-    st.session_state.selected_patient = st.selectbox(
-        "🩺 対象患者",
-        list(PATIENTS.keys()),
-        index=list(PATIENTS.keys()).index(st.session_state.selected_patient),
-    )
+    if st.session_state.selected_patient not in available_patients:
+        st.session_state.selected_patient = list(available_patients.keys())[0] if available_patients else None
+
+    if available_patients:
+        st.session_state.selected_patient = st.selectbox(
+            "🩺 対象患者",
+            list(available_patients.keys()),
+            index=list(available_patients.keys()).index(st.session_state.selected_patient) if st.session_state.selected_patient in available_patients else 0,
+        )
+    else:
+        st.warning("担当患者がいません")
 
     st.markdown("---")
-    st.markdown("### 💬 AIワークスペース")
+    st.markdown("### 💬 業務機能")
+    if st.button("💬 メインチャットへ戻る", use_container_width=True): go_chat()
+    if st.button("🩺 アセスメント", use_container_width=True): st.session_state.workflow = "assessment"; st.rerun()
+    if st.button("📝 看護診断", use_container_width=True): st.session_state.workflow = "diagnosis"; st.rerun()
+    if st.button("👩‍⚕️ 熟練看護師の知見", use_container_width=True): st.session_state.workflow = "expert"; st.rerun()
+    if st.button("📄 訪問記録 / SOAP", use_container_width=True): st.session_state.workflow = "record"; st.rerun()
+    if st.button("💰 請求候補", use_container_width=True): st.session_state.workflow = "billing"; st.rerun()
 
-    if st.button("💬 AI訪問看護アシスタント", use_container_width=True):
-        go_chat()
-    if st.button("🩺 アセスメント", use_container_width=True):
-        st.session_state.workflow = "assessment"
-        st.rerun()
-    if st.button("📝 看護診断", use_container_width=True):
-        st.session_state.workflow = "diagnosis"
-        st.rerun()
-    if st.button("👩‍⚕️ 熟練看護師の知見", use_container_width=True):
-        st.session_state.workflow = "expert"
-        st.rerun()
-    if st.button("📄 訪問記録 / SOAP", use_container_width=True):
-        st.session_state.workflow = "record"
-        st.rerun()
-    if st.button("💰 請求候補", use_container_width=True):
-        st.session_state.workflow = "billing"
-        st.rerun()
+    st.markdown("---")
+    st.markdown("### ⚙️ 管理メニュー")
+    if st.button("👥 患者管理 (登録・編集)", use_container_width=True): st.session_state.workflow = "patient_manage"; st.rerun()
+    
+    if user["role"] in ["本部管理者", "システム管理者"]:
+        if st.button("🏢 事業所管理", use_container_width=True): st.session_state.workflow = "branch_manage"; st.rerun()
+        
+    if user["role"] == "システム管理者":
+        if st.button("🔑 ユーザー管理", use_container_width=True): st.session_state.workflow = "user_manage"; st.rerun()
 
     st.markdown("---")
     if st.button("🔄 会話をリセット", use_container_width=True):
@@ -208,29 +169,69 @@ with st.sidebar:
         st.session_state.record_generated = False
         st.session_state.billing_generated = False
         st.rerun()
-
     if st.button("🚪 ログアウト", use_container_width=True):
         st.session_state.auth_status = "logged_out"
         st.session_state.user_info = None
         st.rerun()
 
 # ==========================================================
-# メイン：会話型AI
+# メイン：会話型AI & ワークフロー
 # ==========================================================
 st.title("💬 訪問看護 AIアシスタント")
-show_patient_summary()
 
-# ---------- 初回メッセージ ----------
+# 初回メッセージ
 if not st.session_state.messages:
     add_ai(
-        "こんにちは。訪問看護AIアシスタントです。\\n\\n"
+        "こんにちは。訪問看護AIアシスタントです。\n\n"
         "患者様の過去記録と本日の情報をもとに、訪問前確認、アセスメント、"
-        "看護診断候補、熟練看護師の知見、訪問記録、請求候補の整理を支援します。\\n\\n"
+        "看護診断候補、熟練看護師の知見、訪問記録、請求候補の整理を支援します。\n\n"
         "まずは、何を確認したいか教えてください。"
     )
 
-# ---------- ワークフローのカード ----------
-if st.session_state.workflow == "assessment":
+# ---------- ワークフローのカード (上部に展開) ----------
+
+if st.session_state.workflow == "idle":
+    show_patient_summary()
+
+elif st.session_state.workflow == "patient_manage":
+    st.markdown('<div class="manage-card"><b>👥 患者管理メニュー</b><br>新しい患者様の登録や、既存情報の編集を行います。</div>', unsafe_allow_html=True)
+    if user["role"] == "看護師":
+        st.info(f"※{user['branch']} に所属する患者のみ表示・編集可能です。")
+    
+    tab1, tab2 = st.tabs(["新規患者登録", "既存患者の編集"])
+    with tab1:
+        with st.form("new_patient_form"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("患者氏名")
+            disease = c2.text_input("主病名")
+            branch = c2.text_input("担当事業所", value=user["branch"], disabled=True) if user["role"] == "看護師" else c2.selectbox("担当事業所", BRANCHES)
+            if st.form_submit_button("新規登録", type="primary"):
+                add_user(f"{name} 様の新規登録を行いました。")
+                add_ai(f"{name} 様（{branch}）の情報を登録しました。チャット画面から引き続き別のアセスメントや記録が可能です。")
+                st.success("✅ 新規登録しました！")
+    with tab2:
+        edit_target = st.selectbox("編集する患者", list(available_patients.keys()))
+        if edit_target:
+            st.text_input("主病名 (編集)", value=available_patients[edit_target]["disease"])
+            if st.button("更新する"):
+                st.success("✅ 更新しました。")
+
+elif st.session_state.workflow == "branch_manage":
+    st.markdown('<div class="manage-card"><b>🏢 事業所管理メニュー</b><br>事業所の追加・編集を行います。</div>', unsafe_allow_html=True)
+    new_branch = st.text_input("新しい事業所名")
+    if st.button("事業所を追加", type="primary"):
+        st.success(f"✅ {new_branch} を新設しました！")
+
+elif st.session_state.workflow == "user_manage":
+    st.markdown('<div class="manage-card"><b>🔑 ユーザー管理メニュー</b><br>新規スタッフのアカウントを追加します。</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    new_email = c1.text_input("メールアドレス")
+    new_role = c1.selectbox("権限", ["看護師", "本部管理者", "システム管理者"])
+    if st.button("招待を送信", type="primary"):
+        st.success("✅ 招待メールを送信しました！")
+
+# ----------------- リッチUI復活部分 -----------------
+elif st.session_state.workflow == "assessment":
     st.subheader("🩺 持病・周辺環境アセスメント")
     p = PATIENTS[st.session_state.selected_patient]
     symptoms = st.multiselect(
@@ -253,7 +254,7 @@ if st.session_state.workflow == "assessment":
         add_user("アセスメント項目を入力しました。")
         add_ai(
             f"入力内容を確認しました。体重変化 {weight:+.1f}kg、呼吸苦「{dyspnea}」、"
-            f"浮腫「{edema}」、尿量「{urine}」です。\\n\\n"
+            f"浮腫「{edema}」、尿量「{urine}」です。\n\n"
             "複数の所見を合わせて評価する必要があります。看護師による確認を前提として、"
             "看護診断候補と追加確認事項を提示できます。"
         )
@@ -308,9 +309,9 @@ elif st.session_state.workflow == "record":
     p = PATIENTS[st.session_state.selected_patient]
     st.caption("AI作成案です。確定前に必ず担当者が内容を確認してください。")
     default_soap = (
-        "S: 「昨日から少し息苦しい」と訴えあり。\\n"
-        f"O: {p['vitals']}。体重前回比 {p['weight_change']}。両下腿に浮腫あり。\\n"
-        "A: 心不全増悪を示唆する所見について追加確認が必要。\\n"
+        "S: 「昨日から少し息苦しい」と訴えあり。\n"
+        f"O: {p['vitals']}。体重前回比 {p['weight_change']}。両下腿に浮腫あり。\n"
+        "A: 心不全増悪を示唆する所見について追加確認が必要。\n"
         "P: 状態を継続観察し、必要に応じて医師への報告を検討。"
     )
     soap = st.text_area("SOAP（AI作成案）", value=default_soap, height=220)
@@ -342,7 +343,8 @@ elif st.session_state.workflow == "billing":
         st.session_state.workflow = "idle"
         st.rerun()
 
-# ---------- 会話履歴 ----------
+
+# ---------- 会話履歴 (常に下部に表示) ----------
 st.markdown("---")
 st.subheader("💬 AIとの会話")
 
@@ -352,13 +354,14 @@ for role, content in st.session_state.messages:
 
 # ---------- クイックアクション ----------
 st.markdown("##### ⚡ 会話から機能へ")
-cols = st.columns(5)
+cols = st.columns(6)
 actions = [
-    ("🩺 アセスメント", "assessment"),
-    ("📝 看護診断", "diagnosis"),
-    ("👩‍⚕️ 熟練者の知見", "expert"),
-    ("📄 訪問記録", "record"),
-    ("💰 請求候補", "billing"),
+    ("🩺 アセス", "assessment"),
+    ("📝 診断", "diagnosis"),
+    ("👩‍⚕️ 知見", "expert"),
+    ("📄 記録", "record"),
+    ("💰 請求", "billing"),
+    ("👤 新規患者", "patient_manage")
 ]
 for col, (label, wf) in zip(cols, actions):
     with col:
@@ -367,45 +370,39 @@ for col, (label, wf) in zip(cols, actions):
             st.rerun()
 
 # ---------- チャット入力 ----------
-if prompt := st.chat_input("患者様の状態やAIに相談したいことを入力してください…"):
+if prompt := st.chat_input("患者様の状態や、行いたい操作（例: 新規患者を登録したい）を入力..."):
     add_user(prompt)
 
-    p = PATIENTS[st.session_state.selected_patient]
     low = prompt.lower()
-
-    if "記録" in prompt or "soap" in low:
-        response = (
-            "承知しました。今日の訪問記録を作成するため、現在の会話内容と患者情報を整理します。"
-            "必要なら「📄 訪問記録」からSOAP作成画面を開けます。"
-        )
-    elif "請求" in prompt or "レセプト" in prompt or "売上" in prompt:
-        response = (
-            "請求候補を整理できます。訪問日、時間、担当資格、記録内容などから情報を抽出し、"
-            "その後にルールベースで算定候補を確認する想定です。「💰 請求候補」を開いてください。"
-        )
+    p = PATIENTS[st.session_state.selected_patient]
+    
+    # ユーザーの発言に応じて自動で機能画面を展開する
+    if "新規" in prompt or "登録" in prompt or "追加" in prompt:
+        add_ai("承知しました。患者様の新規登録画面を展開します。上部のフォームから入力してください。")
+        st.session_state.workflow = "patient_manage"
+    elif "記録" in prompt or "soap" in low:
+        add_ai("今日の訪問記録を作成するための画面を展開します。")
+        st.session_state.workflow = "record"
+    elif "請求" in prompt or "レセプト" in prompt:
+        add_ai("請求候補を確認します。")
+        st.session_state.workflow = "billing"
     elif "ベテラン" in prompt or "熟練" in prompt or "経験" in prompt:
-        response = (
-            "類似する過去事例から、熟練看護師の記録・助言を検索する想定です。"
-            "「👩‍⚕️ 熟練者の知見」を開くと、今回のケースに関連する参考知見を表示します。"
-        )
+        add_ai("類似する過去事例から、熟練看護師の記録・助言を検索しました。「熟練看護師の知見」を展開します。")
+        st.session_state.workflow = "expert"
     elif "診断" in prompt:
-        response = (
-            "現在の情報から看護診断の候補と、その根拠、追加確認事項を整理できます。"
-            "確定診断ではなく、看護師の判断を支援する候補提示として扱います。「📝 看護診断」を開いてください。"
-        )
+        add_ai("現在の情報から看護診断の候補を展開します。")
+        st.session_state.workflow = "diagnosis"
     elif "体重" in prompt or "浮腫" in prompt or "息苦" in prompt or "症状" in prompt:
-        response = (
-            f"{p['age']}歳・{p['disease']}の患者様について、入力内容を確認しました。\\n\\n"
+        add_ai(
+            f"{p['age']}歳・{p['disease']}の患者様について、入力内容を確認しました。\n\n"
             f"現在の登録情報では、{p['weight_change']}、主な症状は"
-            f"{'、'.join(p['symptoms'])}です。\\n\\n"
+            f"{'、'.join(p['symptoms'])}です。\n\n"
             "まずはバイタル・症状・体重推移・生活環境を整理してアセスメントすることをお勧めします。"
-            "「🩺 アセスメント」から追加項目を入力できます。"
+            "アセスメント画面を展開します。"
         )
+        st.session_state.workflow = "assessment"
     else:
-        response = (
-            "内容を確認しました。患者情報・過去記録・今回の入力を組み合わせて、"
-            "アセスメント、看護診断候補、熟練看護師の知見、訪問記録、請求候補のいずれに進むかを整理できます。"
-        )
+        add_ai("内容を確認しました。アセスメントや記録など、必要な機能を選択してください。")
+        st.session_state.workflow = "idle"
 
-    add_ai(response)
     st.rerun()
